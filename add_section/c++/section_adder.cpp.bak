@@ -1,0 +1,356 @@
+#include"section_adder.h"
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <elf.h>
+
+SectionAdder::SectionAdder(char *file_path, char *output, char *code_path) {
+	this->fin = std::fopen(file_path, "rb");
+	this->fout = std::fopen(output, "wb");
+	this->fcode = std::fopen(code_path, "rb");
+	fseek(this->fin, 0, SEEK_END);
+	this->length = ftell(this->fin);
+	rewind(this->fin);
+	this->elf_str = new char [this->length];
+	fread(this->elf_str, this->length, 1, this->fin);
+	rewind(this->fin);
+	this->elf_header = (Elf32_Ehdr*)(this->elf_str);
+}
+
+char *SectionAdder::GetElfStr() {
+	fseek(this->fin, 0, SEEK_END);
+	long len = ftell(this->fin);
+	rewind(this->fin);
+	char *elf_str = new char [len];
+	fread(elf_str, len, 1, this->fin);
+	rewind(this->fin);
+	return elf_str;
+}
+
+Elf32_Ehdr *SectionAdder::GetElfHeader() {
+	Elf32_Ehdr *elf_header = (Elf32_Ehdr*)new char [sizeof(Elf32_Ehdr)];
+	fread((char*)elf_header, sizeof(Elf32_Ehdr), 1, this->fin);
+	rewind(this->fin);
+	return elf_header;
+}
+
+/*
+Elf32_Shdr **SectionAdder::GetSectionHeaderTable() {
+	int num = this->elf_header_table->e_shnum;
+	int size = this->elf_header_table->e_shentsize;
+	int offset = this->elf_header_table->e_shoff;
+	Elf32_Shdr **section_header_table = new Elf32_Shdr* [num];
+	for(int i = 0; i < num; i++) {
+		section_header_table[i] = new Elf32_Shdr;
+		memcpy(section_header_table[i], elf_str + offset + i * size, size);
+	}
+	delete elf_header;
+	delete elf_str;
+	
+	return section_header_table;
+	char *elf_str = this->GetElfStr();
+}
+*/
+
+Elf32_Phdr **SectionAdder::GetProgramHeaderTable() {
+	char *elf_str = this->GetElfStr();
+	Elf32_Ehdr *elf_header = this->GetElfHeader();
+	int num = elf_header->e_phnum;
+	int size = elf_header->e_phentsize;
+	int offset = elf_header->e_phoff;
+	Elf32_Phdr **program_header_table = new Elf32_Phdr* [num];
+	for(int i = 0; i < num; i++) {
+		program_header_table[i] = new Elf32_Phdr;
+		memcpy(program_header_table[i], elf_str + offset + i * size, size);
+	}
+	delete elf_header;
+	delete elf_str;
+	return program_header_table;
+}
+
+Elf32_Sym *SectionAdder::GetSymbolTablebyStr(char *name) {
+	Elf32_Sym *sym_table = new Elf32_Sym;
+	char symtab_name[] = ".symtab";
+	char strtab_name[] = ".strtab";
+	int section_num = this->elf_header->e_shnum;
+	int section_size = this->elf_header->e_shentsize;
+	int section_offset = this->elf_header->e_shoff;
+
+	int str_index = this->elf_header->e_shstrndx;
+	Elf32_Shdr *strtab = new Elf32_Shdr;
+	//Elf32_Shdr *strtab = (Elf32_Shdr*)new char [sizeof(Elf32_Shdr)];
+	//Elf32_Shdr * strtab = (Elf32_Shdr*)malloc(sizeof(Elf32_Shdr));
+	memcpy(strtab, this->elf_str + section_offset + str_index * section_size, sizeof(Elf32_Shdr));
+
+	char *str = new char [strtab->sh_size];
+	memcpy(str, this->elf_str + strtab->sh_offset, strtab->sh_size);
+
+	Elf32_Shdr *sym_section_header_table = new Elf32_Shdr;
+	Elf32_Shdr *symstr_section_header_table = new Elf32_Shdr;
+	for(int i = 0; i < section_num; i++) {
+		Elf32_Shdr *section_table = new Elf32_Shdr;
+		memcpy(section_table, this->elf_str + i * section_size + section_offset, sizeof(Elf32_Shdr));
+		//printf("%s: 0x%x\n", str + section_table->sh_name, section_table->sh_offset);
+		if(!strcmp(str + section_table->sh_name, symtab_name)) {
+			memcpy(sym_section_header_table, this->elf_str + i * section_size + section_offset, sizeof(Elf32_Shdr));
+		} else if(!strcmp(str + section_table->sh_name, strtab_name)) {
+			memcpy(symstr_section_header_table, this->elf_str + i * section_size + section_offset, sizeof(Elf32_Shdr));
+		}
+	}
+
+
+	char *symstr = new char [symstr_section_header_table->sh_size];
+	memcpy(symstr, this->elf_str + symstr_section_header_table->sh_offset, symstr_section_header_table->sh_size);
+
+	int sym_size = sizeof(Elf32_Sym);
+	int sym_num = sym_section_header_table->sh_size / sym_size;
+	int sym_offset = sym_section_header_table->sh_offset;
+	char *symtab_str = new char [sym_section_header_table->sh_size];
+	memcpy(symtab_str, this->elf_str + sym_section_header_table->sh_offset, sym_section_header_table->sh_size);
+	for(int i = 0; i < sym_num; i++) {
+		Elf32_Sym *sym = new Elf32_Sym;
+		memcpy(sym, this->elf_str + sym_offset + i * sym_size, sym_size);
+		//puts(symstr + sym->st_name);
+		if(!strcmp(name, symstr + sym->st_name)) {
+			memcpy(sym_table, this->elf_str + sym_offset + i * sym_size, sym_size);
+		}
+	}
+
+	return sym_table;
+}
+
+
+void SectionAdder::RemoveSectionHeaderTable() {
+	this->length = this->elf_header->e_shoff;
+}
+
+void SectionAdder::RemoveProhramHeaderTable() {
+	int num = this->elf_header->e_phnum;
+	int size = this->elf_header->e_phentsize;
+	int offset = this->elf_header->e_phoff;
+	for(int i = 0; i < num; i++) {
+		Elf32_Phdr *program_header_table = new Elf32_Phdr;
+		memset(this->elf_str + offset + i * size, 0, size);
+	}
+}
+
+void SectionAdder::ChangeProgramHeaderTable() {
+	int num = this->elf_header->e_phnum;
+	int size = this->elf_header->e_phentsize;
+	int offset = this->elf_header->e_phoff;
+	bool flag = true;
+	for(int i = 0; i < num; i++) {
+		Elf32_Phdr *program_header_table = new Elf32_Phdr;
+		memcpy((char*)program_header_table, this->elf_str + offset + i * size, size);
+		if(flag) {
+			//program_header_table->p_type = PT_LOAD;
+			flag = false;
+		}
+		program_header_table->p_filesz = 0x90;
+		program_header_table->p_memsz = 0x90;
+		memcpy(this->elf_str + offset + i * size, (char*)program_header_table, size);
+		delete program_header_table;
+	}
+}
+
+void SectionAdder::ReplaceEntryCode() {
+	fseek(this->fcode, 0, SEEK_END);
+	long len = ftell(this->fcode);
+	rewind(this->fcode);
+	char *code = new char [len];
+	int entry_point = this->elf_header->e_entry;
+	fread(code, len, 1, this->fcode);
+	Elf32_Sym *sym = this->GetSymbolTablebyStr((char*)"main");
+	int offset = sym->st_value - entry_point;
+	//int offset = 0xffffffff;
+	memcpy(code + len - 4, (char*)&offset, 4);
+	/*
+	for(int i = 0; i < len; i++) {
+		printf("%0xx ", (unsigned char)code[i]);
+	}
+	*/
+	memcpy(this->elf_str + entry_point, code, len);
+	//0x12c0
+}
+
+int SectionAdder::AddCodeSection() {
+	Elf32_Sym *start_sym = this->GetSymbolTablebyStr((char*)"_start");
+	fseek(this->fcode, 0, SEEK_END);
+	long len = ftell(this->fcode);
+	rewind(this->fcode);
+	char *code = new char [len];
+	fread(code, len , 1, this->fcode);
+
+	this->elf_header->e_shnum += 1;
+	Elf32_Shdr *section_header = new Elf32_Shdr;
+
+	int program_header_table_num = this->elf_header->e_phnum;
+	int section_header_table_num = this->elf_header->e_shnum;
+	int program_header_table_offset = this->elf_header->e_phoff;
+	int section_header_table_offset = this->elf_header->e_shoff;
+	int program_header_table_size = this->elf_header->e_phentsize;
+	int section_header_table_size = this->elf_header->e_shentsize;
+	int code_begin, code_end, code_size;	
+	int align = 16;
+
+	Elf32_Phdr *program_header_table = new Elf32_Phdr;
+	for(int i = 0; i < program_header_table_num; i++) {
+		memcpy((char*)program_header_table, this->elf_str + program_header_table_offset + i * program_header_table_size, program_header_table_size);
+		if(program_header_table->p_flags & PF_X) {
+			code_begin = program_header_table->p_offset + program_header_table->p_filesz;
+			code_begin = ((code_begin / align) + 1) * align;
+			code_end = program_header_table->p_offset + program_header_table->p_align * ((program_header_table->p_memsz / program_header_table->p_align) + 1); 
+			code_size = len;
+
+			program_header_table->p_filesz += ((len / align) + 1) * align;
+			program_header_table->p_memsz += ((len / align) + 1) * align;	
+
+			memcpy(this->elf_str + program_header_table_offset + i * program_header_table_size, program_header_table, sizeof(Elf32_Phdr));
+
+			break;
+		}
+	}
+
+	if(code_size < len) {
+		std::cout << "file memory not enough" <<std::endl;
+	}
+
+	int offset = start_sym->st_value - code_begin;
+	memcpy(code + len - 1, (char*)&offset, 4);
+	printf("offset: %x\n", offset);
+	
+	memcpy(elf_str + code_begin, code, len);
+
+	//int name = this->AddStrtoStrtab((char*)".new");
+
+	section_header->sh_name = 5;
+	section_header->sh_type = SHT_PROGBITS;
+	section_header->sh_flags = SHF_ALLOC | SHF_EXECINSTR;
+	section_header->sh_addr = code_begin;
+	section_header->sh_offset = code_begin;
+	section_header->sh_size = code_size;
+	section_header->sh_link = 0;
+	section_header->sh_info = 0;
+	section_header->sh_addralign = align;
+	section_header->sh_entsize = 0;
+
+	int length = this->length;
+	this->length += sizeof(Elf32_Shdr);
+	char *tmp = this->elf_str;
+	this->elf_str = new char [this->length];
+	memcpy(this->elf_str, tmp, length);
+	memcpy(this->elf_str + length, (char*)section_header, sizeof(Elf32_Shdr));
+
+	this->elf_header->e_entry = code_begin;
+	memcpy(this->elf_str, this->elf_header, sizeof(Elf32_Ehdr));
+
+	delete tmp;	
+
+	printf("new section start: 0x%x\nsize: 0x%x\n", code_begin, code_size);
+	return code_begin;
+}
+
+int SectionAdder::AddStrtoStrtab(char *name) {
+	int str_index = this->elf_header->e_shstrndx;
+	int section_header_table_offset = this->elf_header->e_shoff;
+	int section_header_table_size = this->elf_header->e_shentsize;
+	int section_header_table_num = this->elf_header->e_shnum;
+	Elf32_Shdr *section_header_table = (Elf32_Shdr*)(this->elf_str + section_header_table_offset + str_index * section_header_table_size);
+	int strtab_offset = section_header_table->sh_offset;
+	int align = section_header_table->sh_addralign;
+	int size = section_header_table->sh_size;
+	
+	int len = strlen(name) + 1;
+	int index = size; 
+	int new_size = size + len;
+	
+	char *section_header_table_str = new char [this->elf_header->e_shnum * this->elf_header->e_shentsize];
+	memcpy(section_header_table_str, this->elf_str + section_header_table_offset, section_header_table_num * section_header_table_size);
+
+	this->elf_header->e_shoff += len;
+	int length = this->length;
+	this->length += len;
+	memcpy(this->elf_str, this->elf_header, sizeof(Elf32_Ehdr));
+	
+	char *str = new char [new_size];
+	memcpy(str, this->elf_str + strtab_offset, size);
+	memcpy(str + size, name, len);
+
+	char *tmp = this->elf_str;
+	this->elf_str = new char [this->length];
+	memcpy(this->elf_str, tmp, length);
+	memcpy(this->elf_str + section_header_table_offset, str, len);
+	memcpy(this->elf_str + this->elf_header->e_shoff, section_header_table_str, section_header_table_num * section_header_table_size);
+	return index;
+}
+
+void SectionAdder::AddLabel(int address) {
+	
+}
+
+void SectionAdder::ChangSymValue(char *name, int value) {
+	Elf32_Sym *sym_table = new Elf32_Sym;
+	char symtab_name[] = ".symtab";
+	char strtab_name[] = ".strtab";
+	int section_num = this->elf_header->e_shnum;
+	int section_size = this->elf_header->e_shentsize;
+	int section_offset = this->elf_header->e_shoff;
+
+	int str_index = this->elf_header->e_shstrndx;
+	Elf32_Shdr *strtab = new Elf32_Shdr;
+	//Elf32_Shdr *strtab = (Elf32_Shdr*)new char [sizeof(Elf32_Shdr)];
+	//Elf32_Shdr * strtab = (Elf32_Shdr*)malloc(sizeof(Elf32_Shdr));
+	memcpy(strtab, this->elf_str + section_offset + str_index * section_size, sizeof(Elf32_Shdr));
+
+	char *str = new char [strtab->sh_size];
+	memcpy(str, this->elf_str + strtab->sh_offset, strtab->sh_size);
+
+	Elf32_Shdr *sym_section_header_table = new Elf32_Shdr;
+	Elf32_Shdr *symstr_section_header_table = new Elf32_Shdr;
+	for(int i = 0; i < section_num; i++) {
+		Elf32_Shdr *section_table = new Elf32_Shdr;
+		memcpy(section_table, this->elf_str + i * section_size + section_offset, sizeof(Elf32_Shdr));
+		//printf("%s: 0x%x\n", str + section_table->sh_name, section_table->sh_offset);
+		if(!strcmp(str + section_table->sh_name, symtab_name)) {
+			memcpy(sym_section_header_table, this->elf_str + i * section_size + section_offset, sizeof(Elf32_Shdr));
+		} else if(!strcmp(str + section_table->sh_name, strtab_name)) {
+			memcpy(symstr_section_header_table, this->elf_str + i * section_size + section_offset, sizeof(Elf32_Shdr));
+		}
+	}
+
+	char *symstr = new char [symstr_section_header_table->sh_size];
+	memcpy(symstr, this->elf_str + symstr_section_header_table->sh_offset, symstr_section_header_table->sh_size);
+
+	int sym_size = sizeof(Elf32_Sym);
+	int sym_num = sym_section_header_table->sh_size / sym_size;
+	int sym_offset = sym_section_header_table->sh_offset;
+	char *symtab_str = new char [sym_section_header_table->sh_size];
+	memcpy(symtab_str, this->elf_str + sym_section_header_table->sh_offset, sym_section_header_table->sh_size);
+	int i;
+	for(i = 0; i < sym_num; i++) {
+		Elf32_Sym *sym = new Elf32_Sym;
+		memcpy(sym, this->elf_str + sym_offset + i * sym_size, sym_size);
+		//puts(symstr + sym->st_name);
+		if(!strcmp(name, symstr + sym->st_name)) {
+			memcpy(sym_table, this->elf_str + sym_offset + i * sym_size, sym_size);
+		}
+	}
+	
+	sym_table->st_value = value;
+	memcpy(this->elf_str + sym_offset + i * sym_size, sym_table, sym_size);
+	
+}
+
+void SectionAdder::ChangSymValue(int value) {
+	char sym_name[] = ".symtab";
+	int section_header_table_num = this->elf_header->e_shnum;
+	int section_header_table_offset = this->elf_header->e_shoff;
+	int section_header_table_size = this->elf_header->e_shentsize;
+	
+	for(int i = 0; i < )
+}
+
+void SectionAdder::WriteFile() {
+	fwrite(this->elf_str, this->length, 1, this->fout);
+	fflush(this->fout);
+}
